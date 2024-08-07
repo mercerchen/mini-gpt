@@ -1,0 +1,1 @@
+I tried to recreate https://github.com/karpathy/ng-video-lecture/tree/master.
