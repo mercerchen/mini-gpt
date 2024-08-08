@@ -17,10 +17,12 @@ class ModelConfig:
     # hyperparam
     device: str = "cuda"
     dropout: float = 0.2
+    learning_rate: float = 3e-4
+    train_epoch: int = 10000
 
     def __post_init__(self):
         self.n_embd = self.n_head * self.head_size
-        
+
 
 class Head(nn.Module):
     def __init__(self, config: ModelConfig):
@@ -37,34 +39,38 @@ class Head(nn.Module):
 
     def forward(self, x: Tensor):
         _, T, C = x.shape
-        assert T == self.config.context_len and C == self.config.n_embd, f"Input is of T: {T}, C: {C}" \
+        assert T == self.config.context_len and C == self.config.n_embd, (
+            f"Input is of T: {T}, C: {C}"
             f" but should be of T: {self.config.context_len} and C: {self.config.n_embd}"
-        
+        )
+
         k: Tensor = self.key(x)  # B, T, head_size
         q: Tensor = self.query(x)
 
         # attention scores
         wei: Tensor = q @ k.transpose(-2, -1) * (k.shape[-1] ** -0.5)  # B, T, T
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
         wei = F.softmax(input=wei, dim=-1)
-        wei = self.dropout(wei) # B, T, T
-        
-        v = self.value(x) # (B, T, T) x (B, T, n_embd) -> (B, T, n_embd)
-        
+        wei = self.dropout(wei)  # B, T, T
+
+        v = self.value(x)  # (B, T, T) x (B, T, n_embd) -> (B, T, n_embd)
+
         return wei @ v
 
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
-        self.heads = nn.ModuleList([Head(config.head_size) for _ in range(config.n_head)])
+        self.heads = nn.ModuleList(
+            [Head(config.head_size) for _ in range(config.n_head)]
+        )
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
-            
+
     def forward(self, x: Tensor):
         out = torch.cat([h(x) for h in self.heads], dim=-1)
         return self.dropout(self.proj(out))
-    
+
 
 class FeedForward(nn.Module):
     def __init__(self, config: ModelConfig):
@@ -73,15 +79,22 @@ class FeedForward(nn.Module):
             nn.Linear(config.n_embd, 4 * config.n_embd),
             nn.ReLU(),
             nn.Linear(4 * config.n_embd, config.n_embd),
-            nn.Dropout(config.dropout)
+            nn.Dropout(config.dropout),
         )
-        
+
     def forward(self, x: Tensor):
         return self.net(x)
-    
-    
+
+
 class Block(nn.Module):
-    pass
+    def __init__(self, config: ModelConfig):
+        self.attn = MultiHeadAttention(config)
+        self.ff = FeedForward(config)
+        self.ln1 = nn.LayerNorm(config.n_embd)
+        self.ln2 = nn.LayerNorm(config.n_embd)
+
+    def forward(self, x: Tensor):
+        return x + self.ln2(self.ff(x + self.ln1(self.attn(x))))
 
 
 class GPT(nn.Module):
@@ -113,7 +126,7 @@ class GPT(nn.Module):
 
     def forward(self, idx: Tensor, targets: Tensor = None):
         B, T = idx.shape
-
+        # targets: B, T
         tok_emb = self.token_embedding(idx)
         pos_emb = self.pos_embedding(torch.arange(T, device=self.config.device))
 
@@ -121,7 +134,7 @@ class GPT(nn.Module):
 
         x = self.blocks(x)
         x = self.ln_f(x)
-        logits = self.lm_head(x)
+        logits: Tensor = self.lm_head(x)
 
         loss = None
 
